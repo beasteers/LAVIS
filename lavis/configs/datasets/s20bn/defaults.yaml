@@ -1,0 +1,56 @@
+datasets:
+  s20bn:
+    # data_dir: ${env.data_dir}/datasets
+    data_type: images # [images|videos|features]
+
+    vis_processor:
+      train:
+        name: "blip2_image_train"
+        image_size: 224
+      eval:
+        name: "blip2_image_train"
+        image_size: 224
+    
+    text_processor:
+      train:
+        name: blip_instruction
+        modality: image
+        task: qa
+      eval:
+        name: blip_caption
+
+    build_info:
+      kwargs:
+        all:
+          filename_format: '{video_id}/frame_{i:010d}.png'
+          json_dir: /scratch/work/ptg/Something_ek_labels
+        train: 
+          json_dir: /scratch/work/ptg/Something_ek_labels/train
+        #   h5_file: /scratch/bs3639/SSv2_train.h5
+        val:
+          json_dir: /scratch/work/ptg/Something_ek_labels/val
+          downsample_count: 2000
+          # /scratch/work/ptg/Something_ek_labels/test_video_ids.csv
+          # h5_file: /scratch/bs3639/SSv2_val.h5
+        #   exclude_video_ids: ../epic-kitchens-100-annotations/EPIC_test_video_ids.csv # XXX: fixme
+        test:
+          json_dir: /scratch/work/ptg/Something_ek_labels/val
+          downsample_count: 16000
+        #   # h5_file: /scratch/bs3639/SSv2_val.h5
+        #   include_video_ids: ../epic-kitchens-100-annotations/EPIC_test_video_ids.csv # XXX: fixme
+      # Be careful not to append minus sign (-) before split to avoid itemizing
+      annotations:
+        train:
+          storage: /scratch/work/ptg/Something_ek_labels/s20bn_train.csv
+        val:
+          storage: /scratch/work/ptg/Something_ek_labels/s20bn_validation.csv
+        test:
+          storage: /scratch/work/ptg/Something_ek_labels/s20bn_validation.csv
+      images:
+        storage: /frames/images
+        train:
+          storage: /frames/images
+        val:
+          storage: /frames/images
+        test:
+          storage: /frames/images

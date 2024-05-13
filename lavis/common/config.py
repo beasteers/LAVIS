@@ -4,13 +4,30 @@
  SPDX-License-Identifier: BSD-3-Clause
  For full license text, see the LICENSE file in the repo root or https://opensource.org/licenses/BSD-3-Clause
 """
-
+import os
 import logging
 import json
 from typing import Dict
 
 from omegaconf import OmegaConf
 from lavis.common.registry import registry
+
+
+def base_load(cfg_path):
+    # Load _BASE_ configs like in yacs
+    configs = []
+    cfg_root = os.path.dirname(cfg_path)
+    print(f"Loading config: {cfg_path}")
+    config = OmegaConf.load(cfg_path)
+    configs.append(config)
+    cfg_path = config.get('_BASE_')
+    while cfg_path:
+        cfg_path = os.path.join(cfg_root, cfg_path)
+        print(f"Inheriting base: {cfg_path}")
+        config = OmegaConf.load(cfg_path)
+        configs.append(config)
+        cfg_path = config.get('_BASE_')
+    return OmegaConf.merge(OmegaConf.create(), *configs[::-1])
 
 
 class Config:
@@ -24,7 +41,7 @@ class Config:
 
         user_config = self._build_opt_list(self.args.options)
 
-        config = OmegaConf.load(self.args.cfg_path)
+        config = base_load(self.args.cfg_path)
 
         runner_config = self.build_runner_config(config)
         model_config = self.build_model_config(config, **user_config)
@@ -95,6 +112,8 @@ class Config:
         dataset_config = OmegaConf.create()
 
         for dataset_name in datasets:
+            if datasets[dataset_name] is None:
+                continue
             builder_cls = registry.get_builder_class(dataset_name)
 
             dataset_config_type = datasets[dataset_name].get("type", "default")

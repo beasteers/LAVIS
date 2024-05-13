@@ -1,0 +1,48 @@
+# python -m torch.distributed.run --nproc_per_node=1 --master_port=25676 train.py --cfg-path lavis/projects/instructblip/train/epic-kitchens/finetune_instructblip_epic_kitchens_overfit.yaml 
+_BASE_: ekos-3fr-det-hobox.yaml
+datasets:
+  epic_kitchens:
+    build_info:
+      kwargs:
+        all:
+          qa_prompt:
+          - describe_predicates
+          # - action_before_after
+          # - action_complete
+          prompt_kw:
+            random_prompt_mix: False
+          filter_verbs:
+          - open
+          - close
+          shuffle: False
+        train: 
+          downsample_count: 128
+          fake_duplicate_count: 60
+          h5_file: /scratch/bs3639/EKOS_train.h5
+        val: 
+          downsample_count: 128
+          h5_file: /scratch/bs3639/EKOS_train.h5
+        test:
+          downsample_count: 128
+          h5_file: /scratch/bs3639/EKOS_train.h5
+      annotations:
+        train:
+          storage: /scratch/bs3639/ego2023/epic-kitchens-100-annotations/EPIC_100_train.csv
+        val:
+          storage: /scratch/bs3639/ego2023/epic-kitchens-100-annotations/EPIC_100_train.csv
+        test:
+          storage: /scratch/bs3639/ego2023/epic-kitchens-100-annotations/EPIC_100_train.csv
+
+run:
+  output_dir: "output/results/epic_kitchens/epic_kitchens_overfit"
+  initial_evaluate: false
+  max_epoch: 10
+  # init_lr: 1e-3
+  # weight_decay: 0.01
+  # num_workers: 0
+  # evaluate: True
+  # eval_ckpt_path: output/results/epic_kitchens/epic_kitchens_overfit/20240409173/checkpoint_best.pth
+  test_splits: ['val']
+
+tags:
+ - overfit

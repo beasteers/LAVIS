@@ -1,0 +1,11 @@
+_BASE_: base.yaml
+datasets:
+  epic_kitchens:
+    build_info:
+      kwargs:
+        all:
+          include_detections: True
+
+run:
+  output_dir: "output/results/epic_kitchens/epic_kitchens_1f_det"
+

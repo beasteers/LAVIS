@@ -1,0 +1,4 @@
+# python -m torch.distributed.run --nproc_per_node=1 --master_port=25676 train.py --cfg-path lavis/projects/instructblip/train/epic-kitchens/finetune_instructblip_epic_kitchens_overfit.yaml 
+_BASE_: overfit.yaml
+run:
+  eval_output_dir: lavis/output/results/epic_kitchens/epic_kitchens_overfit/20240511114

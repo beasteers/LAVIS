@@ -181,11 +181,15 @@ class BaseDatasetBuilder:
 
         ann_info = build_info.annotations
         vis_info = build_info.get(self.data_type)
+        kwargs = build_info.get('kwargs') or {}
+        global_kwargs = kwargs.get('all') or {}
 
         datasets = dict()
         for split in ann_info.keys():
             if split not in ["train", "val", "test"]:
                 continue
+
+            split_kwargs = dict(global_kwargs, **(kwargs.get(split) or {}))
 
             is_train = split == "train"
 
@@ -230,6 +234,7 @@ class BaseDatasetBuilder:
                 text_processor=text_processor,
                 ann_paths=ann_paths,
                 vis_root=vis_path,
+                **split_kwargs,
             )
 
         return datasets

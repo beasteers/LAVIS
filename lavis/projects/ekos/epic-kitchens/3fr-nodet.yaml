@@ -1,0 +1,10 @@
+_BASE_: base.yaml
+datasets:
+  epic_kitchens:
+    build_info:
+      kwargs:
+        all:
+          n_frames: 3
+
+run:
+  output_dir: "output/results/epic_kitchens/epic_kitchens_3f_nodet"

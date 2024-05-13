@@ -6,6 +6,21 @@ __pycache__/
 # C extensions
 *.so
 
+# singuconda
+/sing
+/singrw
+/singss
+/sing*ss
+/*.sifpath
+/*.ext3
+
+/wandb
+/demo*.png
+/*.json
+
+shhh/
+shhhh/
+
 # Distribution / packaging
 .Python
 build/

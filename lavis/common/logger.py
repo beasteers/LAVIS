@@ -10,6 +10,7 @@ import logging
 import time
 from collections import defaultdict, deque
 
+import wandb
 import torch
 import torch.distributed as dist
 
@@ -87,9 +88,10 @@ class MetricLogger(object):
     def update(self, **kwargs):
         for k, v in kwargs.items():
             if isinstance(v, torch.Tensor):
-                v = v.item()
+                kwargs[k] = v = v.item()
             assert isinstance(v, (float, int))
             self.meters[k].update(v)
+        wandb.log(kwargs)
 
     def __getattr__(self, attr):
         if attr in self.meters:

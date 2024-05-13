@@ -10,6 +10,7 @@ from lavis.common.utils import get_cache_path
 from lavis.datasets.builders.base_dataset_builder import BaseDatasetBuilder, MultiModalDatasetBuilder
 from lavis.datasets.datasets.video_vqa_datasets import VideoQADataset, VideoQAInstructDataset
 from lavis.datasets.datasets.music_avqa import MusicAVQAInstructDataset, MusicAVQADataset
+from lavis.datasets.datasets.ekos_datasets import EKVQADataset
 
 
 class VideoQABuilder(BaseDatasetBuilder):
@@ -75,3 +76,26 @@ class MusicAVQAInstructBuilder(MultiModalDatasetBuilder):
     eval_dataset_cls = MusicAVQAInstructDataset
 
     DATASET_CONFIG_DICT = {"default": "configs/datasets/music_avqa/defaults_mm_qa_instruct.yaml"}
+
+
+@registry.register_builder("epic_kitchens")
+class EpicKitchensBuilder(BaseDatasetBuilder):
+    train_dataset_cls = EKVQADataset
+    eval_dataset_cls = EKVQADataset
+
+    DATASET_CONFIG_DICT = {
+        "default": "configs/datasets/epic_kitchens/defaults.yaml",
+    }
+    def _download_data(self):
+        pass
+
+@registry.register_builder("s20bn")
+class S20bnBuilder(BaseDatasetBuilder):
+    train_dataset_cls = EKVQADataset
+    eval_dataset_cls = EKVQADataset
+
+    DATASET_CONFIG_DICT = {
+        "default": "configs/datasets/s20bn/defaults.yaml",
+    }
+    def _download_data(self):
+        pass

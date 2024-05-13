@@ -9,10 +9,12 @@ from lavis.common.registry import registry
 from lavis.tasks.base_task import BaseTask
 from lavis.tasks.captioning import CaptionTask
 from lavis.tasks.image_text_pretrain import ImageTextPretrainTask
+from lavis.tasks.image_text_pretrain_eval import ImageTextPretrainEvalTask
 from lavis.tasks.multimodal_classification import (
     MultimodalClassificationTask,
 )
 from lavis.tasks.retrieval import RetrievalTask
+from lavis.tasks.set_estimation import EpicKitchensTask
 from lavis.tasks.vqa import VQATask, GQATask, AOKVQATask, DisCRNTask
 from lavis.tasks.vqa_reading_comprehension import VQARCTask, GQARCTask
 from lavis.tasks.dialogue import DialogueTask
@@ -42,6 +44,7 @@ __all__ = [
     # "VideoQATask",
     # "VisualEntailmentTask",
     "ImageTextPretrainTask",
+    "ImageTextPretrainEvalTask",
     "DialogueTask",
     "TextToImageGenerationTask",
     "DisCRNTask"

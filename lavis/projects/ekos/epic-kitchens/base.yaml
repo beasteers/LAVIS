@@ -1,0 +1,83 @@
+# Copyright (c) 2022, salesforce.com, inc.
+# All rights reserved.
+# SPDX-License-Identifier: BSD-3-Clause
+# For full license text, see the LICENSE file in the repo root or https://opensource.org/licenses/BSD-3-Clause
+
+model:
+  arch: blip2_t5_instruct_lora
+  model_type: flant5xl
+  load_pretrained: True #pretrain from scratch
+  freeze_vit: True
+  llm_lora:
+    llm_lora_apply: attn
+    llm_lora_r: 8
+
+  qformer_num_classes: 46
+  qformer_cls_arch: dense
+
+datasets:
+  epic_kitchens:
+    train_samples_portion: all
+    build_info:
+      kwargs:
+        all: 
+          image_load_shape: [456, 256]
+          qa_prompt:
+            - describe_predicates
+            - action_before_after
+            - action_complete
+            - yes_no_predicate
+
+    vis_processor:
+      train:
+        name: blip2_image_train
+        image_size: 224
+      eval:
+        name: blip_image_eval
+        image_size: 224
+    text_processor:
+      train:
+        name: blip_question
+      eval:
+        name: blip_question
+
+run:
+  task: ekos
+  # optimizer
+  lr_sched: "linear_warmup_cosine_lr"
+  init_lr: 5e-4
+  min_lr: 0
+  warmup_lr: 5e-4
+  warmup_steps: 0
+
+  weight_decay: 0.05
+  max_epoch: 20
+  batch_size_train: 64
+  batch_size_eval: 64
+  accum_grad_iters: 1
+  num_workers: 12
+
+  # inference-specific
+  max_len: 24
+  min_len: 1
+  num_beams: 16
+  num_ans_candidates: 16
+  inference_method: "rank"
+
+  seed: 42
+  output_dir: "output/results/epic_kitchens/epic_kitchens_1"
+
+  amp: false
+  resume_ckpt_path: null
+
+  evaluate: false
+  initial_evaluate: false
+  train_splits: ["train"]
+  valid_splits: ["val"]
+  test_splits: ["test"]
+  disable_early_stopping: true
+
+  device: "cuda"
+  world_size: 1
+  dist_url: "env://"
+  distributed: True

@@ -1,0 +1,54 @@
+datasets:
+  epic_kitchens:
+    # data_dir: ${env.data_dir}/datasets
+    data_type: images # [images|videos|features]
+
+    vis_processor:
+      train:
+        name: "blip2_image_train"
+        image_size: 224
+      eval:
+        name: "blip2_image_train"
+        image_size: 224
+    
+    text_processor:
+      train:
+        name: blip_instruction
+        modality: image
+        task: qa
+      eval:
+        name: blip_caption
+
+    build_info:
+      kwargs:
+        # all: 
+        #   json_dir: /vast/irr2020/EKU/FINAL
+        train:
+          json_dir: /vast/irr2020/EKU/FINAL/train
+          h5_file: /scratch/bs3639/EKOS_train.h5
+        test: 
+          json_dir: /vast/irr2020/EKU/FINAL/val
+          h5_file: /scratch/bs3639/EKOS_val.h5
+          include_video_ids: ../epic-kitchens-100-annotations/EPIC_test_video_ids.csv # XXX: fixme
+          downsample_count: 12000
+        val:
+          json_dir: /vast/irr2020/EKU/FINAL/val
+          h5_file: /scratch/bs3639/EKOS_val.h5
+          exclude_video_ids: /scratch/bs3639/ego2023/epic-kitchens-100-annotations/EPIC_test_video_ids.csv
+          downsample_count: 2000
+
+      annotations:
+        train:
+          url: ['']  # has to be same len as storage
+          storage:
+              - /scratch/bs3639/ego2023/epic-kitchens-100-annotations/EPIC_100_train.csv  # sorry mom... (abs paths pain)
+        val:
+          url: ['']
+          storage:
+              - /scratch/bs3639/ego2023/epic-kitchens-100-annotations/EPIC_100_validation.csv
+        test:
+          url: ['']
+          storage:
+              - /scratch/bs3639/ego2023/epic-kitchens-100-annotations/EPIC_100_validation.csv
+      images:
+          storage: /rgb_frames

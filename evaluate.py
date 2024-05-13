@@ -8,9 +8,12 @@
 import argparse
 import random
 
+import wandb
+
 import numpy as np
 import torch
 import torch.backends.cudnn as cudnn
+from omegaconf import OmegaConf
 
 import lavis.tasks as tasks
 from lavis.common.config import Config
@@ -69,6 +72,13 @@ def main():
 
     cfg = Config(parse_args())
 
+    tags = sorted({
+        'eval',
+        *(cfg.config.get('tags') or []),
+        *(cfg.config.get('datasets') or {}),
+    })
+    run = wandb.init(config=OmegaConf.to_container(cfg.config, resolve=True), project='epic-kitchens-grounded', tags=tags)
+
     init_distributed_mode(cfg.run_cfg)
 
     setup_seeds(cfg)
@@ -85,7 +95,7 @@ def main():
     runner = RunnerBase(
         cfg=cfg, job_id=job_id, task=task, model=model, datasets=datasets
     )
-    runner.evaluate(skip_reload=True)
+    runner.evaluate(skip_reload=False)
 
 
 if __name__ == "__main__":

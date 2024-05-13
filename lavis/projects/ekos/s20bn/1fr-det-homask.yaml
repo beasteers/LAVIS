@@ -1,0 +1,17 @@
+_BASE_: base.yaml
+datasets:
+  s20bn:
+    build_info:
+      kwargs:
+        all:
+          include_detections: True
+          main_object_only: True
+          included_object_class_ids:
+          - 11
+          - 300
+          - 301
+          - 303
+          - 304
+
+run:
+  output_dir: "output/results/s20bn/s20bn_3f_det_homask"

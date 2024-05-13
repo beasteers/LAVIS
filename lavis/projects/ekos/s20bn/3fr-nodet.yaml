@@ -1,0 +1,10 @@
+_BASE_: base.yaml
+datasets:
+  s20bn:
+    build_info:
+      kwargs:
+        all:
+          n_frames: 3
+
+run:
+  output_dir: "output/results/s20bn/s20bn_3f_nodet"

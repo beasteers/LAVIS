@@ -34,6 +34,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, DistributedSampler
 from torch.utils.data.dataset import ChainDataset
 
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
 @registry.register_runner("runner_base")
 class RunnerBase:
@@ -276,7 +277,7 @@ class RunnerBase:
     @property
     def save_freq(self):
         save_freq = self.config.run_cfg.get("save_freq", 5)
-        return int(save_freq)
+        return int(save_freq) if len(self.valid_splits) else 1
 
     @property
     def val_freq(self):
@@ -325,6 +326,11 @@ class RunnerBase:
         return train_splits
 
     @property
+    def model_selection_split(self):
+        splits = self.valid_splits
+        return splits[0] if splits else None
+
+    @property
     def evaluate_only(self):
         """
         Set to True to skip training.
@@ -360,6 +366,9 @@ class RunnerBase:
         self.result_dir = result_dir
         self.output_dir = output_dir
 
+        eval_output_dir = self.config.run_cfg.get('eval_output_dir', None)
+        self.eval_output_dir = eval_output_dir or output_dir
+
     def train(self):
         start_time = time.time()
         best_agg_metric = 0
@@ -367,82 +376,77 @@ class RunnerBase:
 
         self.log_config()
 
+        # no train
+        if self.evaluate_only:
+            self.evaluate()
+            return
+
+        # if training, we want to evaluate on the current weights
+        self.eval_output_dir = self.output_dir
+
         # resume from checkpoint if specified
-        if not self.evaluate_only and self.resume_ckpt_path is not None:
+        if self.resume_ckpt_path is not None:
             self._load_checkpoint(self.resume_ckpt_path)
 
+        # training loop
         for cur_epoch in range(self.start_epoch, self.max_epoch):
             # training phase
-            if not self.evaluate_only:
-                logging.info("Start training")
-                # See https://github.com/salesforce/LAVIS/issues/449
-                # if cur_epoch == self.start_epoch:
-                #     self.task.before_training(
-                #         model=self.unwrap_dist_model(self.model),
-                #         dataset=self.datasets["train"],
-                #     )
-                train_stats = self.train_epoch(cur_epoch)
-                self.log_stats(split_name="train", stats=train_stats)
+            logging.info("Start training")
+            train_stats = self.train_epoch(cur_epoch)
+            self.log_stats(split_name="train", stats=train_stats)
 
             # evaluation phase
-            if len(self.valid_splits) > 0 and (self.evaluate_only or cur_epoch%self.val_freq == 0):
+            if cur_epoch % self.val_freq == 0:
                 for split_name in self.valid_splits:
                     logging.info("Evaluating on {}.".format(split_name))
-                    
-                    val_log = self.eval_epoch(
-                        split_name=split_name, cur_epoch=cur_epoch
-                    )
-                    if val_log is not None:
-                        if is_main_process():
-                            assert (
-                                "agg_metrics" in val_log
-                            ), "No agg_metrics found in validation log."
+                    val_log = self.eval_epoch(split_name=split_name, cur_epoch=cur_epoch)
 
-                            agg_metrics = val_log["agg_metrics"]
-                            if agg_metrics > best_agg_metric and split_name == "val":
-                                best_epoch, best_agg_metric = cur_epoch, agg_metrics
-                                if not self.evaluate_only:
-                                    self._save_checkpoint(cur_epoch, is_best=True)
+                    if val_log is not None and is_main_process():
+                        assert ("agg_metrics" in val_log), "No agg_metrics found in validation log."
+                        agg_metrics = val_log["agg_metrics"]
+                        if agg_metrics > best_agg_metric and split_name == self.model_selection_split:
+                            best_epoch, best_agg_metric = cur_epoch, agg_metrics
+                            self._save_checkpoint(cur_epoch, is_best=True)
 
-                            val_log.update({"best_epoch": best_epoch})
-                            self.log_stats(val_log, split_name)
-
-            else:
-                # if no validation split is provided, we just save the checkpoint at the end of each epoch.
-                if not self.evaluate_only:
-                    self._save_checkpoint(cur_epoch, is_best=False)
-
-            if self.evaluate_only:
-                break
+                        val_log.update({"best_epoch": best_epoch})
+                        self.log_stats(val_log, split_name)
 
             # save checkpoint according to save freq
-            if self.save_freq>0 and cur_epoch%self.save_freq == 0:
+            if cur_epoch % self.save_freq == 0:
                 self._save_checkpoint(cur_epoch, is_best=False)
 
             dist.barrier()
 
         # save last checkpoint
-        if self.save_last and not self.evaluate_only:
+        if self.save_last:
             self._save_checkpoint(cur_epoch, is_best=False)
 
-        # testing phase
-        test_epoch = "best" if len(self.valid_splits) > 0 else cur_epoch
-        self.evaluate(cur_epoch=test_epoch, skip_reload=self.evaluate_only)
+        # final test phase
+        self.evaluate(cur_epoch="best" if len(self.valid_splits) else cur_epoch)
 
+        # log total train time
         total_time = time.time() - start_time
         total_time_str = str(datetime.timedelta(seconds=int(total_time)))
         logging.info("Training time {}".format(total_time_str))
 
-    def evaluate(self, cur_epoch="best", skip_reload=False):
-        test_logs = dict()
+    def evaluate(self, cur_epoch="best", skip_reload=False, log_stats=True):
+        if not skip_reload:
+            ckpt_path = self.eval_output_dir
+            if os.path.isdir(ckpt_path):
+                ckpt_path = os.path.join(ckpt_path, f'checkpoint_{cur_epoch}.pth')
+            
+            # assert os.path.isfile(ckpt_path), "always load"
+            if os.path.isfile(ckpt_path):
+                print("LOADING CHECKPOINT:", ckpt_path)
+                self._load_checkpoint(ckpt_path)
 
-        if len(self.test_splits) > 0:
-            for split_name in self.test_splits:
-                test_logs[split_name] = self.eval_epoch(
-                    split_name=split_name, cur_epoch=cur_epoch, skip_reload=skip_reload
-                )
+        test_logs = {}
+        for split_name in self.test_splits:
+            test_logs[split_name] = self.eval_epoch(split_name, cur_epoch, skip_reload=True)
+            if log_stats:
+                self.log_stats(test_logs[split_name], split_name)
 
-            return test_logs
+        return test_logs
 
     def train_epoch(self, epoch):
         # train
@@ -473,7 +477,7 @@ class RunnerBase:
                 During testing, we will use provided weights and skip reloading the best checkpoint .
         """
         data_loader = self.dataloaders.get(split_name, None)
-        assert data_loader, "data_loader for split {} is None.".format(split_name)
+        assert data_loader is not None, "data_loader for split {} is None.".format(split_name)
 
         # TODO In validation, you need to compute loss as well as metrics
         # TODO consider moving to model.before_evaluation()
@@ -645,8 +649,18 @@ class RunnerBase:
         else:
             raise RuntimeError("checkpoint url or path is invalid")
 
-        state_dict = checkpoint["model"]
-        self.unwrap_dist_model(self.model).load_state_dict(state_dict)
+        m = self.unwrap_dist_model(self.model)
+        try:
+            m.load_state_dict(checkpoint["model"])
+        except RuntimeError as e:
+            r = m.load_state_dict(checkpoint["model"], strict=False)
+            params = dict(m.named_parameters())
+            grad_keys = [k for k in r.missing_keys if getattr(params.get(k), 'requires_grad', False)]
+            print("checkpoint missing:", {k.split('.')[0] for k in r.missing_keys})
+            if any(grad_keys):
+                print(f"MISSING WEIGHTS FOR NON-FROZEN PARAMETERS:")
+                print(grad_keys)
+                input()
 
         self.optimizer.load_state_dict(checkpoint["optimizer"])
         if self.scaler and "scaler" in checkpoint:
