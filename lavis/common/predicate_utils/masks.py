@@ -107,7 +107,7 @@ ma = sv.MaskAnnotator(opacity=0.4)
 # pa = sv.PolygonAnnotator()
 # ba = sv.BoxCornerAnnotator()
 ba = sv.BoundingBoxAnnotator(thickness=1)
-la = sv.LabelAnnotator(text_position=sv.Position.CENTER, text_scale=0.45, text_padding=2)
+la = sv.LabelAnnotator(text_position=sv.Position.CENTER, text_scale=0.55, text_padding=2)
 def draw_detections(image, detections, det_index, boxes_only=False):
     labels = detections.data['labels']
     color_lookup = np.array([det_index.index(labels[i]) for i in range(len(detections))])

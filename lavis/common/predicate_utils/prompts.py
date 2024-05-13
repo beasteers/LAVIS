@@ -25,15 +25,29 @@ main_object_id
 object_from_predicate
 '''
 
+def get_positive_negative_statements(ann, detection_labels=None):
+    noun = ann['noun']
+    all_nouns = ann['all_nouns']
+    # state = ann['state']
+    action = ann['action']
+    if detection_labels is not None:
+        all_nouns = [f'{n}[{i}]' for i, n in zip(detection_labels, all_nouns)]
+    noun_dict = action.var_dict(*all_nouns)
+    candidate_state = action.get_state(action.vars[0], ann['pre_post'])
+    pos_text = [f'{noun} is {s.format(**noun_dict)}' for s in candidate_state]
+    neg_text = [f'{noun} is {s.inv().format(**noun_dict)}' for s in candidate_state]
+    return pos_text, neg_text
+
 
 def PRE_true_false_statements(ann, detection_labels=None, predicate_freq=None, n_pos=3, n_neg=6, random_prompt_mix=True):
     noun = ann['noun']
     all_nouns = ann['all_nouns']
     # state = ann['state']
     action = ann['action']
+    if detection_labels is not None:
+        all_nouns = [f'{n}[{i}]' for i, n in zip(detection_labels, all_nouns)]
     noun_dict = action.var_dict(*all_nouns)
     candidate_state = action.get_state(action.vars[0], ann['pre_post'])
-    noun_dict = action.var_dict(*all_nouns)
     pos_states = sample_states(candidate_state, predicate_freq, n_pos)
     neg_states = [s.inv() for s in sample_states(candidate_state, predicate_freq, n_neg)]
     pos_text = [f'{noun} is {s.format(**noun_dict)}' for s in pos_states]

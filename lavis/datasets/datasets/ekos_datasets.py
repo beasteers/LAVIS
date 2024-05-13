@@ -17,7 +17,7 @@ from PIL import Image
 from lavis.datasets.datasets.base_dataset import BaseDataset
 from lavis.common.predicate_utils.predicates import load_pddl_yaml, Predicate
 from lavis.common.predicate_utils.masks import get_detections, draw_detections, get_detections_h5
-from lavis.common.predicate_utils.prompts import get_prompt_function, get_pos_neg_sample_function
+from lavis.common.predicate_utils.prompts import get_prompt_function, get_pos_neg_sample_function, get_positive_negative_statements
 
 
 
@@ -70,6 +70,8 @@ class VideoFrameDataset(Dataset):
                  pn_prompt_kw=None,
                  image_load_shape=None, 
                  return_masks=False,
+                 n_pos_text=3,
+                 n_neg_text=6,
     ):
         super().__init__()
         self.vis_processor = vis_processor
@@ -90,6 +92,8 @@ class VideoFrameDataset(Dataset):
         self.main_object_only = main_object_only
         self.image_load_shape = image_load_shape
         self.return_masks = return_masks
+        self.n_pos_text = n_pos_text
+        self.n_neg_text = n_neg_text
         self.h5_file = None
         if self.include_detections and h5_file is not None:
             print("Using", h5_file)
@@ -190,6 +194,9 @@ class VideoFrameDataset(Dataset):
         prompt, target = self.get_prompt(ann, object_index, **self.prompt_kw)
         # load question answer
         pos_text, neg_text = self.get_pos_neg_sample(ann, object_index, **self.prompt_kw)
+        all_pos_text, all_neg_text = get_positive_negative_statements(ann, object_index)
+        pos_text = np.random.choice(all_pos_text, n=self.n_pos_text, replace=len(all_pos_text)<self.n_pos_text)
+        neg_text = np.random.choice(all_neg_text, n=self.n_neg_text, replace=len(all_neg_text)<self.n_neg_text)
 
         # get classification vector
         class_targets = class_labels = None
@@ -207,7 +214,7 @@ class VideoFrameDataset(Dataset):
             # **ann,
             'image': video,
             "prompt": prompt,
-            "caption": ". ".join(sorted(pos_text)),
+            "caption": ". ".join(sorted(set(all_pos_text))),
             "text_class": [[x] + neg_text for x in pos_text],
             "text_match": pos_text + neg_text,
             "text_class_targets": torch.zeros(len(pos_text)).long(),
