@@ -22,63 +22,77 @@ class ImageTextPretrainEvalTask(BaseTask):
     def __init__(self):
         super().__init__()
 
+    def before_evaluation(self, model, dataset, **kwargs):
+        print("before eval",kwargs)
+        super().before_evaluation(model, dataset, **kwargs)
+        self.sample_index = np.random.choice(len(dataset), min(60, len(dataset)), replace=False)
+        print("eval samples:", self.sample_index, len(dataset))
+        self.result_table = wandb.Table(columns=[
+            "index", 
+            "image", 
+            "text_match", 
+            # "caption", 
+            # "text_class", 
+            "narration_id", 
+            "narration",
+        ])
+
     def valid_step(self, model, samples):
-        itc_targets = samples['text_class_targets']  # [batch, sample]
+        # itc_targets = samples['text_class_targets']  # [batch, sample]
         itm_targets = samples['text_match_targets']  # [batch, sample]
-        itc_pred = model.itc(samples)  # [batch, sample, class_proba]
-        itm_pred = model.itm(samples)  # [batch, sample, 2]
-        caption_pred = model.generate(samples)
+        # itc_pred = model.itc(samples)  # [batch, sample, class_proba]
+        itm_pred_flat, idx = model.itm_flat(samples)  # [batch, sample, 2]
+        # caption_pred = model.generate(samples)
+
+        n = len(samples["image_id"])
+        itm_pred = [itm_pred_flat[idx == i] for i in range(n)]
 
         results = []
         with open(f'{registry.get_path("result_dir")}/result_stream.txt', 'a') as fh:
-            n = len(samples["image_id"])
             for i in range(n):
                 r = {
-                    "text_class": samples["text_class"][i],  # str[n_pos, n_neg+1]
+                    # "text_class": samples["text_class"][i],  # str[n_pos, n_neg+1]
+                    # "text_class_true": samples['text_class_targets'][i].cpu().tolist(), # [n_pos]
+                    # "text_class_pred": itc_pred[i].cpu().tolist(), # [n_pos, n_neg+1]
                     "text_match": samples["text_match"][i],  # str[n_pos + n_neg]
-                    "text_class_true": samples['text_class_targets'][i].cpu().tolist(), # [n_pos]
                     "text_match_true": samples["text_match_targets"][i].cpu().tolist(), # [n_pos + n_neg]
-                    "text_class_pred": itc_pred[i].cpu().tolist(), # [n_pos, n_neg+1]
                     "text_match_pred": itm_pred[i].cpu().tolist(), # [n_pos + n_neg, 2]
-                    "caption_true": samples["caption"][i],  # str
-                    "caption_pred": caption_pred[i],  # str
+                    "text_match_states": samples["text_match_states"][i],
+                    # "caption_true": samples["caption"][i],  # str
+                    # "caption_pred": caption_pred[i],  # str
 
                     "image_id": samples["image_id"][i], 
                     "narration_id": samples["narration_id"][i], 
                     "noun": samples["noun"][i], 
+                    "context_mode": samples["context_mode"][i],
                 }
                 results.append(r)
                 fh.write(f'{json.dumps(r)}\n')
                 if samples['sample_id'][i] in self.sample_index:
-                    print(samples["narration"][i])
+                    print(f"--- Sample {samples['sample_id'][i]} ----", samples["narration"][i])
                     print("Match:")
                     print(samples["text_match"][i])
-                    print(samples["text_match_targets"][i].cpu().tolist())
+                    print(samples["text_match_targets"][i])
                     print(np.round(itm_pred[i][:, 1].double().cpu().numpy(), 2).tolist())
-                    print("Class:", samples["text_class"][i][0])
-                    for j in range(len(samples["text_class"][i])):
-                        print(samples["text_class"][i][j][0])
-                        print(samples["text_class_targets"][i][j].cpu().tolist(), np.round(itc_pred[i][j].double().cpu().numpy(), 2).tolist())
+                    # print("Class:", samples["text_class"][i][0])
+                    # for j in range(len(samples["text_class"][i])):
+                    #     print(samples["text_class"][i][j][0])
+                    #     print(samples["text_class_targets"][i][j].cpu().tolist(), np.round(itc_pred[i][j].double().cpu().numpy(), 2).tolist())
 
-                # if samples['sample_id'][i] in self.sample_index:
-                #     print("Sample:", samples['sample_id'][i], samples["narration_id"][i], samples["narration"][i])
-                #     print("in:", samples['text_input'][i])
-                #     print("pred:", answer_pred[i])
-                #     print("true:", samples["text_output"][i])
                     self.result_table.add_data(
                         samples['sample_id'][i],
                         wandb.Video(norm_video(samples["image"][i]).cpu().numpy(), fps=3) 
                         if samples["image"].ndim == 5 else
                         wandb.Image(samples["image"][i].cpu()),
 
-                        samples["caption"][i] + '\n' + caption_pred[i], 
                         '\n'.join(
                             f'{t} {i} {p:.0%}' 
-                            for t, i, p in zip(samples["text_match"][i], samples["text_match_targets"][i].tolist(), itm_pred[i, :, 1].double().cpu().tolist())),
-                        ' | '.join(samples["text_class"][i][0]) + '\n' + '\n'.join(
-                            f'{t[0]} {i} {np.round(p, 2).tolist()}' 
-                            for t, i, p in zip(samples["text_class"][i], samples["text_class_targets"][i].tolist(), itc_pred[i].double().cpu().numpy())
-                        ),
+                            for t, i, p in zip(samples["text_match"][i], samples["text_match_targets"][i].tolist(), itm_pred[i][:, 1].double().cpu().tolist())),
+                        # samples["caption"][i] + '\n' + caption_pred[i], 
+                        # ' | '.join(samples["text_class"][i][0]) + '\n' + '\n'.join(
+                        #     f'{t[0]} {i} {np.round(p, 2).tolist()}' 
+                        #     for t, i, p in zip(samples["text_class"][i], samples["text_class_targets"][i].tolist(), itc_pred[i].double().cpu().numpy())
+                        # ),
 
                         samples["narration_id"][i],  # Narration ID
                         samples["narration"][i]  # Narration text
@@ -90,66 +104,82 @@ class ImageTextPretrainEvalTask(BaseTask):
     def _report_metrics(self, result_file, split):
         results = json.load(open(result_file, "r"))
 
-        # calculate metrics
-        errors = []
-        acc = []
-        for res in results:
-            try:
-                acc.append(jaccard_score(res["caption_pred"], res["caption_true"]))
-            except Exception as e:
-                print("Could not parse", res["caption_pred"], e)
-                errors.append(res["caption_pred"])
-                acc.append(0)
+        # # calculate metrics
+        # errors = []
+        # acc = []
+        # for res in results:
+        #     try:
+        #         acc.append(jaccard_score(res["caption_pred"], res["caption_true"]))
+        #     except Exception as e:
+        #         print("Could not parse", res["caption_pred"], e)
+        #         errors.append(res["caption_pred"])
+        #         acc.append(0)
+        # lm_accuracy = np.mean(acc)
         
-        y_true_flat = np.array([x for d in results for x in d['text_class_true']]).astype(int)
-        y_pred_flat = np.array([x for d in results for x in d['text_class_pred']]).astype(float)
-        y_pred_flat = np.argmax(y_pred_flat, 1)
-        class_accuracy = accuracy_score(y_true_flat, y_pred_flat)
-        # class_precision = precision_score(y_true_flat, y_pred_flat)
-        # class_recall = recall_score(y_true_flat, y_pred_flat)
-        # class_f1 = f1_score(y_true_flat, y_pred_flat)
+        # y_true_flat = np.array([x for d in results for x in d['text_class_true']]).astype(int)
+        # y_pred_flat = np.array([x for d in results for x in d['text_class_pred']]).astype(float)
+        # y_pred_flat = np.argmax(y_pred_flat, 1)
+        # class_accuracy = accuracy_score(y_true_flat, y_pred_flat)
+        # # class_precision = precision_score(y_true_flat, y_pred_flat)
+        # # class_recall = recall_score(y_true_flat, y_pred_flat)
+        # # class_f1 = f1_score(y_true_flat, y_pred_flat)
+
+        y_bool_flat = np.array([x[0] for d in results for x in d['text_match_states']])
+        y_text_flat = np.array([x[1] for d in results for x in d['text_match_states']])
 
         y_true_flat = np.array([x for d in results for x in d['text_match_true']]).astype(int)
         y_pred_flat = np.array([x for d in results for x in d['text_match_pred']]).astype(float)
         y_pred_flat = np.argmax(y_pred_flat, 1)
         match_accuracy = accuracy_score(y_true_flat, y_pred_flat)
-        # match_precision = precision_score(y_true_flat, y_pred_flat)
-        # match_recall = recall_score(y_true_flat, y_pred_flat)
-        # match_f1 = f1_score(y_true_flat, y_pred_flat)
+        match_precision = precision_score(y_true_flat, y_pred_flat)
+        match_recall = recall_score(y_true_flat, y_pred_flat)
+        match_f1 = f1_score(y_true_flat, y_pred_flat)
+
+        labels, label_idx = np.unique(y_text_flat, return_inverse=True)
+        
+        class_metrics = {'f1': [], 'precision': [], 'recall': []}
+        for i in range(len(labels)):
+            yb = y_bool_flat[label_idx == i]
+            yt = y_true_flat[label_idx == i]
+            yp = y_pred_flat[label_idx == i]
+            yt[~yb] = 1-yt[~yb]
+            yp[~yb] = 1-yp[~yb]
+            class_metrics['f1'].append(f1_score(yt, yp))
+            class_metrics['precision'].append(precision_score(yt, yp))
+            class_metrics['recall'].append(recall_score(yt, yp))
 
         # report metrics
-        lm_accuracy = np.mean(acc)
+        
         metrics = {
-            "agg_metrics": class_accuracy, 
-            "lm_accuracy": lm_accuracy,
-            "class_accuracy": class_accuracy, 
+            "agg_metrics": match_accuracy, 
+            # "lm_accuracy": lm_accuracy,
+            # "class_accuracy": class_accuracy, 
             # "class_precision": class_precision,
             # "class_recall": class_recall,
             # "class_f1": class_f1,
             "match_accuracy": match_accuracy, 
-            # "match_precision": match_precision,
-            # "match_recall": match_recall,
-            # "match_f1": match_f1,
+            "match_precision": match_precision,
+            "match_recall": match_recall,
+            "match_f1": match_f1,
+            "match_precision_macro": np.mean(class_metrics['precision']),
+            "match_recall_macro": np.mean(class_metrics['recall']),
+            "match_f1_macro": np.mean(class_metrics['f1']),
             "split": split,
         }
 
+        for i, l in enumerate(labels):
+            print(f'{l: <20} f1: {class_metrics["f1"][i]:.0%}  prec: {class_metrics["precision"][i]:.0%}  rec: {class_metrics["recall"][i]:.0%}')
+        with open(os.path.join(registry.get_path("output_dir"), f"class_metrics.txt"), "a") as f:
+            f.write(json.dumps(class_metrics) + "\n")
         with open(os.path.join(registry.get_path("output_dir"), f"log.txt"), "a") as f:
             f.write(json.dumps(metrics) + "\n")
-        with open(os.path.join(registry.get_path("output_dir"), f"parse_error.txt"), "a") as f:
-            for x in errors:
-                f.write(f'{x}\n')
+        # with open(os.path.join(registry.get_path("output_dir"), f"parse_error.txt"), "a") as f:
+        #     for x in errors:
+        #         f.write(f'{x}\n')
 
         logging.info(metrics)
 
         return metrics
-        
-    
-    def before_evaluation(self, model, dataset, **kwargs):
-        print("before eval",kwargs)
-        super().before_evaluation(model, dataset, **kwargs)
-        self.sample_index = np.random.choice(len(dataset), min(60, len(dataset)), replace=False)
-        print("eval samples:", self.sample_index, len(dataset))
-        self.result_table = wandb.Table(columns=["index", "image", "caption", "text_match", "text_class", "narration_id", "narration"])
 
     def after_evaluation(self, val_result, split_name, epoch='?', **kwargs):
         # Log the table

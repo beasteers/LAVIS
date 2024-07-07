@@ -44,6 +44,16 @@ def parse_args():
         "in xxx=yyy format will be merged into config file (deprecate), "
         "change to --cfg-options instead.",
     )
+    parser.add_argument(
+        "--tags",
+        nargs="+",
+        help="add tags to run",
+    )
+    parser.add_argument(
+        "--name",
+        help="wandb name",
+    )
+
 
     args = parser.parse_args()
     # if 'LOCAL_RANK' not in os.environ:
@@ -62,7 +72,8 @@ def setup_seeds(config):
     cudnn.benchmark = False
     cudnn.deterministic = True
 
-
+import ipdb
+@ipdb.iex
 def main():
     # allow auto-dl completes on main process without timeout when using NCCL backend.
     # os.environ["NCCL_BLOCKING_WAIT"] = "1"

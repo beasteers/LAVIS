@@ -1,0 +1,16 @@
+_BASE_: ../vqa_finetune.yaml
+
+datasets:
+  epic_kitchens:
+  s20bn:
+    build_info:
+      kwargs:
+        all: {}
+
+run:
+  evaluate: True
+  output_dir: "output/results/ekos/ekos_s20bn_eval"
+  valid_splits: []
+  test_splits: ['test']
+
+  resume_ckpt_path: output/results/epic_kitchens/epic_kitchens_pretrain/20240513160/checkpoint_best.pth

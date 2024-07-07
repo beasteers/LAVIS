@@ -1,0 +1,8 @@
+_BASE_: ../vqa_finetune.yaml
+run:
+  evaluate: True
+  output_dir: "output/results/ekos/ekos_ekos_eval"
+  valid_splits: []
+  test_splits: ['test']
+
+  resume_ckpt_path: output/results/epic_kitchens/epic_kitchens_pretrain/20240513160/checkpoint_best.pth

@@ -5,19 +5,16 @@ datasets:
 
     vis_processor:
       train:
-        name: "blip2_image_train"
+        name: blip2_image_train
         image_size: 224
       eval:
-        name: "blip2_image_train"
+        name: blip_image_eval
         image_size: 224
-    
     text_processor:
       train:
-        name: blip_instruction
-        modality: image
-        task: qa
+        name: blip_question
       eval:
-        name: blip_caption
+        name: blip_question
 
     build_info:
       kwargs:
@@ -30,7 +27,7 @@ datasets:
           json_dir: /vast/irr2020/EKU/FINAL/val
           h5_file: /scratch/bs3639/EKOS_val.h5
           include_video_ids: ../epic-kitchens-100-annotations/EPIC_test_video_ids.csv # XXX: fixme
-          downsample_count: 12000
+          # downsample_count: 12000
         val:
           json_dir: /vast/irr2020/EKU/FINAL/val
           h5_file: /scratch/bs3639/EKOS_val.h5

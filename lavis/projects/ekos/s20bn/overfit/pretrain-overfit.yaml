@@ -1,5 +1,5 @@
 # python -m torch.distributed.run --nproc_per_node=1 --master_port=25676 train.py --cfg-path lavis/projects/instructblip/train/epic-kitchens/finetune_instructblip_s20bn_overfit.yaml 
-_BASE_: ekos-3fr-det-hobox.yaml
+_BASE_: ../pretrain.yaml
 datasets:
   s20bn:
     build_info:
@@ -17,7 +17,7 @@ datasets:
           shuffle: False
         train: 
           downsample_count: 128
-          fake_duplicate_count: 60
+          fake_duplicate_count: 8
         val: 
           downsample_count: 128
         test:
@@ -29,10 +29,8 @@ datasets:
           storage: /scratch/work/ptg/Something_ek_labels/s20bn_train.csv
         test:
           storage: /scratch/work/ptg/Something_ek_labels/s20bn_train.csv
-
 run:
   output_dir: "output/results/s20bn/s20bn_overfit"
-  initial_evaluate: false
   max_epoch: 10
   # init_lr: 1e-3
   # weight_decay: 0.01
@@ -43,3 +41,4 @@ run:
 
 tags:
  - overfit
+ - qf

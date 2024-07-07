@@ -65,6 +65,8 @@ class RunnerBase:
 
         # self.setup_seeds()
         self.setup_output_dir()
+        # 
+        self.resume_ckpt_path = self.config.run_cfg.get("resume_ckpt_path", None)
 
     @property
     def device(self):
@@ -341,9 +343,9 @@ class RunnerBase:
     def use_dist_eval_sampler(self):
         return self.config.run_cfg.get("use_dist_eval_sampler", True)
 
-    @property
-    def resume_ckpt_path(self):
-        return self.config.run_cfg.get("resume_ckpt_path", None)
+    # @property
+    # def resume_ckpt_path(self):
+    #     return self.config.run_cfg.get("resume_ckpt_path", None)
 
     @property
     def train_loader(self):
@@ -366,9 +368,6 @@ class RunnerBase:
         self.result_dir = result_dir
         self.output_dir = output_dir
 
-        eval_output_dir = self.config.run_cfg.get('eval_output_dir', None)
-        self.eval_output_dir = eval_output_dir or output_dir
-
     def train(self):
         start_time = time.time()
         best_agg_metric = 0
@@ -381,12 +380,11 @@ class RunnerBase:
             self.evaluate()
             return
 
-        # if training, we want to evaluate on the current weights
-        self.eval_output_dir = self.output_dir
-
         # resume from checkpoint if specified
         if self.resume_ckpt_path is not None:
             self._load_checkpoint(self.resume_ckpt_path)
+        # clear weight path so that training weights are used
+        self.resume_ckpt_path = None
 
         # training loop
         for cur_epoch in range(self.start_epoch, self.max_epoch):
@@ -394,6 +392,7 @@ class RunnerBase:
             logging.info("Start training")
             train_stats = self.train_epoch(cur_epoch)
             self.log_stats(split_name="train", stats=train_stats)
+            self._save_checkpoint(cur_epoch, is_best=False)
 
             # evaluation phase
             if cur_epoch % self.val_freq == 0:
@@ -407,13 +406,14 @@ class RunnerBase:
                         if agg_metrics > best_agg_metric and split_name == self.model_selection_split:
                             best_epoch, best_agg_metric = cur_epoch, agg_metrics
                             self._save_checkpoint(cur_epoch, is_best=True)
+                            self.resume_ckpt_path = os.path.join(self.output_dir, 'checkpoint_best.pth')
 
                         val_log.update({"best_epoch": best_epoch})
                         self.log_stats(val_log, split_name)
 
-            # save checkpoint according to save freq
-            if cur_epoch % self.save_freq == 0:
-                self._save_checkpoint(cur_epoch, is_best=False)
+            # # save checkpoint according to save freq
+            # if cur_epoch % self.save_freq == 0:
+            #     self._save_checkpoint(cur_epoch, is_best=False)
 
             dist.barrier()
 
@@ -429,23 +429,25 @@ class RunnerBase:
         total_time_str = str(datetime.timedelta(seconds=int(total_time)))
         logging.info("Training time {}".format(total_time_str))
 
-    def evaluate(self, cur_epoch="best", skip_reload=False, log_stats=True):
-        if not skip_reload:
-            ckpt_path = self.eval_output_dir
-            if os.path.isdir(ckpt_path):
-                ckpt_path = os.path.join(ckpt_path, f'checkpoint_{cur_epoch}.pth')
-            
-            # assert os.path.isfile(ckpt_path), "always load"
-            if os.path.isfile(ckpt_path):
-                print("LOADING CHECKPOINT:", ckpt_path)
-                self._load_checkpoint(ckpt_path)
+    def evaluate(self, cur_epoch="best", skip_reload=False):
+        # bypass evaluation and recompute stats
+        results_file = self.config.run_cfg.get('results_file')
+        if results_file:
+            print("Using existing results file:", results_file)
+            self.task._report_metrics(results_file, 'val')
+            return 
+
+        # used if evaluate is called without train
+        if not skip_reload and self.resume_ckpt_path is not None:
+            self._load_checkpoint(self.resume_ckpt_path)
+            skip_reload = True
+
 
         test_logs = {}
         for split_name in self.test_splits:
-            test_logs[split_name] = self.eval_epoch(split_name, cur_epoch, skip_reload=True)
-            if log_stats:
-                self.log_stats(test_logs[split_name], split_name)
-
+            test_logs[split_name] = self.eval_epoch(split_name, cur_epoch, skip_reload=skip_reload)
+            self.log_stats(test_logs[split_name], split_name)
+            skip_reload = True # no need to reload multiple times
         return test_logs
 
     def train_epoch(self, epoch):
@@ -660,13 +662,15 @@ class RunnerBase:
             if any(grad_keys):
                 print(f"MISSING WEIGHTS FOR NON-FROZEN PARAMETERS:")
                 print(grad_keys)
-                input()
+                # input()
 
-        self.optimizer.load_state_dict(checkpoint["optimizer"])
-        if self.scaler and "scaler" in checkpoint:
-            self.scaler.load_state_dict(checkpoint["scaler"])
+        else:
+            self.optimizer.load_state_dict(checkpoint["optimizer"])
+            if self.scaler and "scaler" in checkpoint:
+                self.scaler.load_state_dict(checkpoint["scaler"])
 
-        self.start_epoch = checkpoint["epoch"] + 1
+            self.start_epoch = checkpoint["epoch"] + 1
+
         logging.info("Resume checkpoint from {}".format(url_or_filename))
 
     @main_process

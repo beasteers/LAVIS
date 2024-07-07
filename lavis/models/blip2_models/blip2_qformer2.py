@@ -31,6 +31,11 @@ def flatten_text(text):
     x = np.array(text)
     return x.flatten().tolist(), x.shape
 
+def flatten_text_index(text):
+    xs = [x for xs in text for x in xs]
+    idx = np.array([i for i, xs in enumerate(text) for x in xs])
+    return xs, idx
+
 
 @registry.register_model("blip2_qformer2")
 class Blip2Qformer2(Blip2Base):
@@ -81,12 +86,9 @@ class Blip2Qformer2(Blip2Base):
         # --------------------------------- Q-Former --------------------------------- #
 
         self.tokenizer = self.init_tokenizer(truncation_side="left")
-
-        self.Qformer, self.query_tokens = self.init_Qformer(
-            num_query_token, self.visual_encoder.num_features, cross_attention_freq
-        )
-
+        self.Qformer, self.query_tokens = self.init_Qformer(num_query_token, self.visual_encoder.num_features, cross_attention_freq)
         self.Qformer.resize_token_embeddings(len(self.tokenizer))
+
         state_dict = self.Qformer.state_dict()
         for name, param in self.Qformer.named_parameters():
             if "_query" in name:
@@ -95,7 +97,6 @@ class Blip2Qformer2(Blip2Base):
 
         self.vision_proj = nn.Linear(self.Qformer.config.hidden_size, embed_dim)
         self.text_proj = nn.Linear(self.Qformer.config.hidden_size, embed_dim)
-
         self.itm_head = nn.Linear(self.Qformer.config.hidden_size, 2)
 
         self.temp = nn.Parameter(0.07 * torch.ones([]))
@@ -106,90 +107,97 @@ class Blip2Qformer2(Blip2Base):
 
     def forward(self, samples):
         image = samples["image"]
-        prompt = samples["text_input"]
-        captions = samples["caption"]
-        text_class = samples["text_class"]
-        text_match = samples["text_match"]
-        itc_targets = samples["text_class_targets"]
-        itm_targets = samples["text_match_targets"]
+        captions = samples.get("caption")
+        text_class = samples.get("text_class")
+        text_match = samples.get("text_match")
+        itc_targets = samples.get("text_class_targets")
+        itm_targets = samples.get("text_match_targets")
 
         # encode image
         image_embeds, image_atts = self._encode_vision(image)  # [64, 514, 1408], [64, 514]
         query_tokens, query_atts = self._get_query_tokens(image)  # [64, 32, 768], [64, 32]
-        query_output = self.Qformer.bert(
-            query_embeds=query_tokens,
-            encoder_hidden_states=image_embeds,
-            encoder_attention_mask=image_atts,
-            use_cache=True,
-            return_dict=True)
-        image_feats = F.normalize(self.vision_proj(query_output.last_hidden_state), dim=-1)
+
+        if text_class is not None or captions is not None:
+            query_output = self.Qformer.bert(
+                query_embeds=query_tokens,
+                encoder_hidden_states=image_embeds,
+                encoder_attention_mask=image_atts,
+                use_cache=True,
+                return_dict=True)
+            image_feats = F.normalize(self.vision_proj(query_output.last_hidden_state), dim=-1)
 
         # encode pos_text
-        text_class_flat, (batch_size, n_samples, n_class) = flatten_text(text_class)
+        loss_itc = 0
+        if text_class is not None:
+            text_class_flat, (batch_size, n_samples, n_class) = flatten_text(text_class)
 
-        text_tokens_itc = self._get_qformer_text_tokens(text_class_flat, image)
-        text_output_itc = self.Qformer.bert(
-            text_tokens_itc.input_ids,
-            attention_mask=text_tokens_itc.attention_mask,
-            return_dict=True)
-        text_feats_itc = F.normalize(self.text_proj(text_output_itc.last_hidden_state[:, 0, :]), dim=-1)
-        text_feats_itc = text_feats_itc.reshape(batch_size, n_samples, n_class, text_feats_itc.shape[-1])
+            text_tokens_itc = self._get_qformer_text_tokens(text_class_flat, image)
+            text_output_itc = self.Qformer.bert(
+                text_tokens_itc.input_ids,
+                attention_mask=text_tokens_itc.attention_mask,
+                return_dict=True)
+            text_feats_itc = F.normalize(self.text_proj(text_output_itc.last_hidden_state[:, 0, :]), dim=-1)
+            text_feats_itc = text_feats_itc.reshape(batch_size, n_samples, n_class, text_feats_itc.shape[-1])
 
-        # encode image and text
-        text_match_flat, (_, n_match) = flatten_text(text_match)
+            # text-contrastive learning
+            # [64, 2, 256], [64, 3, 256]
+            # [64, 2, 1, 256] + [64, 2, 3, 256] > [64, 2, 4, 256]
+            # [64, 32, 256], [64, 2, 4, 256] > [64, 2, 4, 32]
+            # [64, 2, 4, 32] > [64, 2, 4] > [128, 4]
+            sim = torch.einsum('ijk,ilmk->ilmj', image_feats, text_feats_itc)
+            sim, _ = sim.max(-1)
+            sim = sim / self.temp
 
-        image_embeds_itc = image_embeds.repeat_interleave(n_match, 0)
-        image_atts_itc = image_atts.repeat_interleave(n_match, 0)
-        
-        text_match_tokens = self._get_qformer_text_tokens(text_match_flat, image)
-        query_tokens_itm, query_atts_itm = self._get_query_tokens(image_embeds_itc)
+            sim = sim.reshape(-1, sim.shape[-1])
+            itc_targets = itc_targets.reshape(-1)
+            loss_itc = F.cross_entropy(sim, itc_targets, label_smoothing=0.1)
 
-        itm_output = self.Qformer.bert(
-            text_match_tokens.input_ids, #[192, 32]
-            query_embeds=query_tokens_itm, #[192, 32, 768]
-            attention_mask=torch.cat([query_atts_itm, text_match_tokens.attention_mask], dim=1), #[192, 64]
-            encoder_hidden_states=image_embeds_itc, #[192, 514, 1408]
-            encoder_attention_mask=image_atts_itc, #[192, 514]
-            return_dict=True,
-        )
+        loss_itm = 0
+        if text_match is not None:
+            # encode image and text
+            text_match_flat, (_, n_match) = flatten_text(text_match)
 
-        # text-contrastive learning
-        # [64, 2, 256], [64, 3, 256]
-        # [64, 2, 1, 256] + [64, 2, 3, 256] > [64, 2, 4, 256]
-        # [64, 32, 256], [64, 2, 4, 256] > [64, 2, 4, 32]
-        # [64, 2, 4, 32] > [64, 2, 4] > [128, 4]
-        sim = torch.einsum('ijk,ilmk->ilmj', image_feats, text_feats_itc)
-        sim, _ = sim.max(-1)
-        sim = sim / self.temp
+            image_embeds_itc = image_embeds.repeat_interleave(n_match, 0)
+            image_atts_itc = image_atts.repeat_interleave(n_match, 0)
+            
+            text_match_tokens = self._get_qformer_text_tokens(text_match_flat, image)
+            query_tokens_itm, query_atts_itm = self._get_query_tokens(image_embeds_itc)
 
-        sim = sim.reshape(-1, sim.shape[-1])
-        itc_targets = itc_targets.reshape(-1)        
-        loss_itc = F.cross_entropy(sim, itc_targets, label_smoothing=0.1)
+            itm_output = self.Qformer.bert(
+                text_match_tokens.input_ids, #[192, 32]
+                query_embeds=query_tokens_itm, #[192, 32, 768]
+                attention_mask=torch.cat([query_atts_itm, text_match_tokens.attention_mask], dim=1), #[192, 64]
+                encoder_hidden_states=image_embeds_itc, #[192, 514, 1408]
+                encoder_attention_mask=image_atts_itc, #[192, 514]
+                return_dict=True,
+            )
 
-        # per-sample ITM
-        # [192, 32, x]
-        vl_embeds = itm_output.last_hidden_state[:, :query_tokens_itm.size(1), :]
-        vl_output = self.itm_head(vl_embeds)
-        logits = vl_output.mean(dim=1)
-        logits = logits.reshape(batch_size * n_match, 2)
-        itm_targets = itm_targets.reshape(-1)
-        loss_itm = F.cross_entropy(logits, itm_targets)  # [192, 2], [192]
+            # per-sample ITM
+            # [192, 32, x]
+            vl_embeds = itm_output.last_hidden_state[:, :query_tokens_itm.size(1), :]
+            vl_output = self.itm_head(vl_embeds)
+            logits = vl_output.mean(dim=1)
+            logits = logits.reshape(batch_size * n_match, 2)
+            itm_targets = itm_targets.reshape(-1)
+            loss_itm = F.cross_entropy(logits, itm_targets)  # [192, 2], [192]
 
         # LM Loss
-        text_tokens = self._get_qformer_text_tokens(captions, image)
-        decoder_input_ids = text_tokens.input_ids.clone()
-        decoder_input_ids[:, 0] = self.tokenizer.bos_token_id
-        labels = decoder_input_ids.masked_fill(decoder_input_ids == self.tokenizer.pad_token_id, -100)
+        loss_lm = 0
+        if captions is not None:
+            text_tokens = self._get_qformer_text_tokens(captions, image)
+            decoder_input_ids = text_tokens.input_ids.clone()
+            decoder_input_ids[:, 0] = self.tokenizer.bos_token_id
+            labels = decoder_input_ids.masked_fill(decoder_input_ids == self.tokenizer.pad_token_id, -100)
 
-        lm_output = self.Qformer(
-            decoder_input_ids,
-            attention_mask=torch.cat([query_atts, text_tokens.attention_mask], dim=1),
-            past_key_values=query_output.past_key_values,
-            return_dict=True,
-            labels=labels,
-        )
+            lm_output = self.Qformer(
+                decoder_input_ids,
+                attention_mask=torch.cat([query_atts, text_tokens.attention_mask], dim=1),
+                past_key_values=query_output.past_key_values,
+                return_dict=True,
+                labels=labels,
+            )
 
-        loss_lm = lm_output.loss
+            loss_lm = lm_output.loss
 
         # lm_loss = 0
         return BlipOutput(
@@ -231,6 +239,38 @@ class Blip2Qformer2(Blip2Base):
         logits = vl_output.mean(dim=1)
         logits = logits.reshape(batch_size, n_match, 2)
         return torch.softmax(logits, dim=-1)
+
+    @torch.no_grad()
+    def itm_flat(
+        self,
+        samples,
+    ):
+        image = samples["image"]
+        text_match = samples["text_match"]
+        text_match_flat, text_index = flatten_text_index(text_match)
+
+        image_embeds, image_atts = self._encode_vision(image)  # [64, 514, 1408], [64, 514]
+        image_embeds_itm = image_embeds[text_index]
+        image_atts_itm = image_atts[text_index]
+
+        query_tokens, query_atts = self._get_query_tokens(image_embeds_itm)  # [64, 32, 768], [64, 32]
+        text_tokens = self._get_qformer_text_tokens(text_match_flat, image_embeds_itm)
+
+        # encode image and text
+        itm_output = self.Qformer.bert(
+            text_tokens.input_ids, #[192, 32]
+            query_embeds=query_tokens, #[192, 32, 768]
+            attention_mask=torch.cat([query_atts, text_tokens.attention_mask], dim=1), #[192, 64]
+            encoder_hidden_states=image_embeds_itm, #[192, 514, 1408]
+            encoder_attention_mask=image_atts_itm, #[192, 514]
+            return_dict=True,
+        )
+
+        # [192, 32, x] > [192, 32, 2] > [192, 2]
+        vl_embeds = itm_output.last_hidden_state[:, : query_tokens.size(1), :]
+        vl_output = self.itm_head(vl_embeds)
+        logits = vl_output.mean(dim=1)
+        return torch.softmax(logits, dim=-1), text_index
 
     @torch.no_grad()
     def itc(

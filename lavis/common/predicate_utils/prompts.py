@@ -33,10 +33,13 @@ def get_positive_negative_statements(ann, detection_labels=None):
     if detection_labels is not None:
         all_nouns = [f'{n}[{i}]' for i, n in zip(detection_labels, all_nouns)]
     noun_dict = action.var_dict(*all_nouns)
-    candidate_state = action.get_state(action.vars[0], ann['pre_post'])
-    pos_text = [f'{noun} is {s.format(**noun_dict)}' for s in candidate_state]
-    neg_text = [f'{noun} is {s.inv().format(**noun_dict)}' for s in candidate_state]
-    return pos_text, neg_text
+    pos_states = action.get_state(action.vars[0], ann['pre_post'])
+    neg_states = [s.inv() for s in pos_states]
+    pos_text = [f'{noun} is {s.format(**noun_dict)}' for s in pos_states]
+    neg_text = [f'{noun} is {s.format(**noun_dict)}' for s in neg_states]
+    pos_states = [(not s.neg, s.name) for s in pos_states]
+    neg_states = [(not s.neg, s.name) for s in neg_states]
+    return (pos_text, neg_text), (pos_states, neg_states)
 
 
 def PRE_true_false_statements(ann, detection_labels=None, predicate_freq=None, n_pos=3, n_neg=6, random_prompt_mix=True):
@@ -57,6 +60,43 @@ def PRE_true_false_statements(ann, detection_labels=None, predicate_freq=None, n
     # print(neg_text)
     # input()
     return pos_text, neg_text
+
+
+def QA_action_state_change(ann, detection_labels=None, predicate_freq=None, random_prompt_mix=True):
+    noun = ann['noun']
+    action = ann['action']
+    all_nouns = ann['all_nouns']
+    noun_dict = action.var_dict(*all_nouns)
+    pre_states = action.get_state(action.vars[0], 'pre')
+    post_states = action.get_state(action.vars[0], 'post')
+    changed_post_states = [s for s in post_states if s not in pre_states]
+
+    text_input = f'What changed about the {noun}?'
+    text_input = f'Question: {text_input} Answer: '
+    text_output = ". ".join(sorted(set(s.format(**noun_dict) for s in changed_post_states)))
+    return text_input.strip(), text_output.strip()
+
+
+def QA_action_state_const(ann, detection_labels=None, predicate_freq=None, random_prompt_mix=True):
+    noun = ann['noun']
+    action = ann['action']
+    all_nouns = ann['all_nouns']
+    noun_dict = action.var_dict(*all_nouns)
+    pre_states = action.get_state(action.vars[0], 'pre')
+    post_states = action.get_state(action.vars[0], 'post')    
+    const_states = [s for s in post_states if s in pre_states]
+
+    text_input = f'What stayed the same about the {noun}?'
+    text_input = f'Question: {text_input} Answer: '
+    text_output = ". ".join(sorted(set(s.format(**noun_dict) for s in const_states)))
+    return text_input.strip(), text_output.strip()
+
+
+def QA_action_recognition(ann, detection_labels=None, predicate_freq=None, random_prompt_mix=True):
+    text_input = f'What action is the person doing?'
+    text_input = f'Question: {text_input} Answer: '
+    text_output = ann['narration']
+    return text_input.strip(), text_output.strip()
 
 
 def QA_describe_predicates(ann, detection_labels=None, predicate_freq=None, random_prompt_mix=True):
@@ -302,10 +342,21 @@ def join_and(states):
     return ', '.join(map(str, states))
 
 
+def QA_mix(variants=None, task=None):
+    if task == 'action':
+        if variants:
+            unknown = set(variants) - set(ACTION_PROMPTS)
+            assert not unknown, f"Unknown variants: {unknown}"
+        def QA_mix(ann, detection_labels=None, **kw):
+            qas = variants or list(ACTION_PROMPTS)
+            # TODO: handle case where qas is empty - go to next sample
+            kw.setdefault('random_prompt_mix', False)
+            return ACTION_PROMPTS[random.choice(qas)](ann, detection_labels, **kw)
+        return QA_mix
 
-def QA_mix(variants=None):
+
     if variants:
-        unknown = set(variants) - set(PROMPTS)
+        unknown = set(variants) - set(FRAME_PROMPTS)
         assert not unknown, f"Unknown variants: {unknown}"
     def QA_mix(ann, detection_labels=None, **kw):
         qas = [
@@ -330,11 +381,11 @@ def QA_mix(variants=None):
             qas = [q for q in qas if q in variants]
         # TODO: handle case where qas is empty - go to next sample
         kw.setdefault('random_prompt_mix', False)
-        return PROMPTS[random.choice(qas)](ann, detection_labels, **kw)
+        return FRAME_PROMPTS[random.choice(qas)](ann, detection_labels, **kw)
     return QA_mix
 
 
-PROMPTS = {
+FRAME_PROMPTS = {
     'describe_predicates': QA_describe_predicates, 
     'yes_no_predicate': QA_yes_no_predicate,
     'action_before_after': QA_action_before_after,
@@ -344,15 +395,23 @@ PROMPTS = {
     'object_from_predicate': QA_object_from_predicate,
 }
 
+ACTION_PROMPTS = {
+    'action_state_change': QA_action_state_change,
+    'action_state_const': QA_action_state_const,
+    'action_recognition': QA_action_recognition,
+}
 
-def get_prompt_function(prompt):
+
+def get_prompt_function(prompt, task=None):
     if callable(prompt):
         return prompt
+    
+    PROMPTS = ACTION_PROMPTS if task == 'action' else FRAME_PROMPTS
     if isinstance(prompt, str):
         print("QA Task:", prompt)
         return PROMPTS[prompt]
     print("QA mixer:", prompt or list(PROMPTS))
-    return QA_mix(prompt)
+    return QA_mix(prompt, task)
 
 
 def get_pos_neg_sample_function(prompt):

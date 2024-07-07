@@ -1,0 +1,22 @@
+_BASE_: base.yaml
+datasets:
+  s20bn:
+    build_info:
+      kwargs:
+        all:
+          n_frames: 7
+          lm_context_mode: action
+          include_detections: True
+        val:
+          qa_prompt:
+            - action_state_change
+            - action_state_const
+        test:
+          qa_prompt:
+            - action_state_change
+            - action_state_const
+
+run:
+  output_dir: "output/results/s20bn/s20bn_videollm"
+  # resume_ckpt_path: lavis/output/results/s20bn/s20bn_pretrain/20240513160/checkpoint_best.pth
+  resume_ckpt_path: lavis/output/results/s20bn/s20bn_videollm/20240514212/checkpoint_0.pth

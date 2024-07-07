@@ -46,6 +46,8 @@ class Blip2T5Instruct2(Blip2Base):
         vit_precision="fp16",
         freeze_vit=True,
         num_query_token=32,
+        cross_attention_freq=2,
+        embed_dim=256,
         t5_model="google/flan-t5-xl",
         prompt="",
         max_txt_len=128,
@@ -96,17 +98,12 @@ class Blip2T5Instruct2(Blip2Base):
 
         t5_config = T5Config.from_pretrained(t5_model)
         t5_config.dense_act_fn = "gelu"
-        self.t5_model = T5ForConditionalGeneration.from_pretrained(
-            t5_model, config=t5_config
-        )
+        self.t5_model = T5ForConditionalGeneration.from_pretrained(t5_model, config=t5_config)
+        self.t5_proj = nn.Linear(self.Qformer.config.hidden_size, self.t5_model.config.hidden_size)
 
         for name, param in self.t5_model.named_parameters():
             param.requires_grad = False
             param.data = param.data.bfloat16()
-
-        self.t5_proj = nn.Linear(
-            self.Qformer.config.hidden_size, self.t5_model.config.hidden_size
-        )
 
         # -------------------------------- Parameters -------------------------------- #
 
@@ -457,17 +454,19 @@ class Blip2T5Instruct2(Blip2Base):
         # TODO possible to encode video here? if image.dim() == 5:
         with self.maybe_autocast():
             if image.dim() == 5:
-                B, T, C, H, W = image.size()
-                image = image.reshape(B*T, C, H, W)
+                image = image[:, None]  # add time dimension (b, T, d, c, h, w)
+            if image.dim() == 6:
+                B, T, D, C, H, W = image.size()
+                image = image.reshape(B*T*D, C, H, W)
                 image_embeds = self.ln_vision(self.visual_encoder(image))
                 _, L, C = image_embeds.size()
-                image_embeds = image_embeds.reshape(B, T*L, C)
+                image_embeds = image_embeds.reshape(B, T, D*L, C)
             else:
                 image_embeds = self.ln_vision(self.visual_encoder(image))
         image_atts = torch.ones(image_embeds.size()[:-1], dtype=torch.long, device=image.device)
         return image_embeds, image_atts
     
-    def _encode_qformer(self, image_embeds, image_atts, query_tokens, query_atts, text_tokens=None, proj_t5=False):
+    def _encode_qformer(self, image_embeds, image_atts, query_tokens, query_atts, text_tokens=None):
         """Encode image, query, and text tokens with the Q-Former."""
         # add batch size
         query_tokens = query_tokens.expand(image_embeds.size(0), -1, -1)
@@ -493,25 +492,22 @@ class Blip2T5Instruct2(Blip2Base):
                 return_dict=True,
             )
 
-        if proj_t5:
-            inputs_t5 = self.t5_proj(query_output.last_hidden_state[:,:query_tokens.size(1),:])
-            atts_t5 = torch.ones(inputs_t5.size()[:-1], dtype=torch.long, device=inputs_t5.device)
-            return inputs_t5, atts_t5, query_output
         return query_output
 
     def _proj_t5(self, query_output):
-        inputs_t5 = self.t5_proj(query_output.last_hidden_state[:,:query_tokens.size(1),:])
+        inputs_t5 = self.t5_proj(query_output.last_hidden_state[:,:self.query_tokens.size(1),:])
         atts_t5 = torch.ones(inputs_t5.size()[:-1], dtype=torch.long, device=inputs_t5.device)
         return inputs_t5, atts_t5
 
     def _encode_qformer_t5(self, image_embeds, image_atts, query_tokens, query_atts=None, text_tokens=None):
         """Encode frame(s) with the Q-Former and project them for the language model."""
-        if image_embeds.dim() == 4 and not self.qformer_video_input:
+        if image_embeds.dim() == 4:
             # We have image embeddings of shape (batch, time, patch, features)
             # encode each frame with Q-Former separately i.e. (batch, patch, features)
             inputs_t5, atts_t5, query_outputs = [], [], []
             for j in range(image_embeds.size(1)):
-                frame_inputs_t5, frame_atts_t5, query_output = self._encode_qformer(image_embeds[:,j], image_atts[:,j], query_tokens, query_atts, text_tokens, proj_t5=True)
+                query_output = self._encode_qformer(image_embeds[:,j], image_atts[:,j], query_tokens, query_atts, text_tokens)
+                frame_inputs_t5, frame_atts_t5 = self._proj_t5(query_output)
                 inputs_t5.append(frame_inputs_t5)
                 atts_t5.append(frame_atts_t5)
             inputs_t5 = torch.cat(inputs_t5, dim=1)
@@ -519,8 +515,9 @@ class Blip2T5Instruct2(Blip2Base):
         else:
             # We have image/video embeddings of shape (batch, time * patch, features)
             # encode all frames with Q-Former together i.e. (batch, time * patch, features)
-            frame_inputs_t5, frame_atts_t5, query_output = self._encode_qformer(image_embeds, image_atts, query_tokens, query_atts, text_tokens, proj_t5=True)
-        return frame_inputs_t5, frame_atts_t5
+            query_output = self._encode_qformer(image_embeds, image_atts, query_tokens, query_atts, text_tokens)
+            inputs_t5, atts_t5 = self._proj_t5(query_output)
+        return inputs_t5, atts_t5
 
     def _lemmatize(self, answers):
         return [

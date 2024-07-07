@@ -9,6 +9,7 @@ datasets:
       kwargs:
         all:
           include_detections: True
+          video_sequence: False
 
 run:
   task: image_text_pretrain_eval

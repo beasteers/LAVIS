@@ -61,7 +61,9 @@ class BaseDataset(Dataset):
         for k in keys:
             values = [sample[k] for sample in samples]
             # If the value type for the key is torch.Tensor, stack them else return list
-            collated_dict[k] = torch.stack(values, dim=0) if isinstance(values[0], torch.Tensor) else values
+            if isinstance(values[0], torch.Tensor) and len(set(x.shape for x in values)) == 1:
+                values = torch.stack(values, dim=0)
+            collated_dict[k] = values
         return collated_dict
         # return default_collate(samples)
 

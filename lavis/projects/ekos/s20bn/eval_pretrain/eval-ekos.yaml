@@ -1,0 +1,17 @@
+# python -m torch.distributed.run --nproc_per_node=1 --master_port=25676 train.py --cfg-path lavis/projects/instructblip/train/epic-kitchens/finetune_instructblip_epic_kitchens_overfit.yaml 
+_BASE_: ../pretrain.yaml
+
+datasets:
+  s20bn:
+  epic_kitchens:
+    build_info:
+      kwargs:
+        all:
+          include_detections: True
+          video_sequence: False
+
+run:
+  evaluate: true
+  output_dir: "output/results/ekos/s20bn_ekos_pretrain_eval"
+  resume_ckpt_path: lavis/output/results/s20bn/s20bn_pretrain/20240513160/checkpoint_best.pth
+  # results_file: lavis/output/results/s20bn/s20bn_pretrain/20240516013/result/test_epic_kitchens_result_best.json

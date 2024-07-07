@@ -9,6 +9,7 @@ datasets:
       kwargs:
         all:
           include_detections: True
+          video_sequence: False
 
 run:
   task: image_text_pretrain_eval
@@ -21,3 +22,5 @@ run:
   weight_decay: 0.05
   max_epoch: 10
   warmup_steps: 5000
+
+  resume_ckpt_path: lavis/output/results/s20bn/s20bn_pretrain/20240513160/checkpoint_best.pth

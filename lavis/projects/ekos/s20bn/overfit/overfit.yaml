@@ -1,14 +1,14 @@
 # python -m torch.distributed.run --nproc_per_node=1 --master_port=25676 train.py --cfg-path lavis/projects/instructblip/train/epic-kitchens/finetune_instructblip_s20bn_overfit.yaml 
-_BASE_: pretrain.yaml
+_BASE_: ../vqa_finetune.yaml
 datasets:
   s20bn:
     build_info:
       kwargs:
         all:
-          qa_prompt:
-          - describe_predicates
-          # - action_before_after
-          # - action_complete
+          # qa_prompt:
+          # - describe_predicates
+          # # - action_before_after
+          # # - action_complete
           prompt_kw:
             random_prompt_mix: False
           filter_verbs:
@@ -17,7 +17,7 @@ datasets:
           shuffle: False
         train: 
           downsample_count: 128
-          fake_duplicate_count: 8
+          fake_duplicate_count: 4
         val: 
           downsample_count: 128
         test:
@@ -29,8 +29,10 @@ datasets:
           storage: /scratch/work/ptg/Something_ek_labels/s20bn_train.csv
         test:
           storage: /scratch/work/ptg/Something_ek_labels/s20bn_train.csv
+
 run:
   output_dir: "output/results/s20bn/s20bn_overfit"
+  initial_evaluate: false
   max_epoch: 10
   # init_lr: 1e-3
   # weight_decay: 0.01
@@ -41,4 +43,3 @@ run:
 
 tags:
  - overfit
- - qf

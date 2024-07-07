@@ -10,7 +10,7 @@ model:
   freeze_vit: True
   llm_lora:
     llm_lora_apply: attn
-    llm_lora_r: 8
+    llm_lora_r: 4
 
   qformer_num_classes: 46
   qformer_cls_arch: dense
@@ -22,11 +22,11 @@ datasets:
       kwargs:
         all: 
           image_load_shape: [456, 256]
-          qa_prompt:
-            - describe_predicates
-            - action_before_after
-            - action_complete
-            - yes_no_predicate
+          # qa_prompt:
+          #   - describe_predicates
+          #   - action_before_after
+          #   - action_complete
+          #   - yes_no_predicate
 
     vis_processor:
       train:
@@ -52,8 +52,8 @@ run:
 
   weight_decay: 0.05
   max_epoch: 20
-  batch_size_train: 48
-  batch_size_eval: 48
+  batch_size_train: 32
+  batch_size_eval: 24
   accum_grad_iters: 1
   num_workers: 12
 

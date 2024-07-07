@@ -26,6 +26,7 @@ def base_load(cfg_path):
         print(f"Inheriting base: {cfg_path}")
         config = OmegaConf.load(cfg_path)
         configs.append(config)
+        cfg_root = os.path.dirname(cfg_path)
         cfg_path = config.get('_BASE_')
     return OmegaConf.merge(OmegaConf.create(), *configs[::-1])
 

@@ -109,10 +109,13 @@ class EpicKitchensTask(BaseTask):
                         print(cs[yt!=-1])
                         print(yt[yt!=-1])
                         print(np.round(yp[yt!=-1], 3))
+
+                    video = samples["image"][i]
+                    video = video.reshape(-1, *video.shape[-3:])
                     self.result_table.add_data(
                         samples['sample_id'][i],
-                        wandb.Video(norm_video(samples["image"][i]).cpu().numpy(), fps=3) 
-                        if samples["image"].ndim == 5 else
+                        wandb.Video(norm_video(video).cpu().numpy(), fps=3) 
+                        if samples["image"].ndim >= 5 else
                         wandb.Image(samples["image"][i].cpu()),
                         samples["text_input"][i],  # question
                         answer_pred[i],  # Predicted answer

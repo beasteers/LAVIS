@@ -1,0 +1,8 @@
+_BASE_: ../vqa_finetune.yaml
+run:
+  evaluate: True
+  output_dir: "output/results/epic_kitchens/s20bn_s20bn_eval"
+  valid_splits: []
+  test_splits: ['test']
+
+  resume_ckpt_path: output/results/s20bn/s20bn_pretrain/20240513160/checkpoint_best.pth

@@ -8,9 +8,8 @@ from collections import OrderedDict
 import h5py
 import numpy as np
 import pandas as pd
-import torch
-import torch.nn.functional as F
 from torch.utils.data import Dataset
+import torch
 from PIL import Image
 import supervision as sv
 import cv2
@@ -40,7 +39,6 @@ class EKVQADataset(BaseDataset):
             self.annotation_path, vis_root, 
             json_dir=json_dir,
             vis_processor=vis_processor, 
-            split=split,
             **kw)
         self.annotations = self.dataset.annotations
         self._add_instance_ids()
@@ -57,36 +55,47 @@ class EKVQADataset(BaseDataset):
 
 
 class VideoFrameDataset(Dataset):
-    def __init__(self, annotations, vis_root, vis_processor, split, classes, h5_file=None, **cfg):
+    def __init__(self, 
+                 annotations, vis_root, vis_processor, classes, 
+                 h5_file=None,
+                 qa_prompt=None, 
+                 pn_prompt=None,
+                 include_detections=False, 
+                 filename_format='{video_id}/frame_{i:010d}.jpg', 
+                 n_frames=1, 
+                 boxes_only=False, 
+                 included_object_class_ids=None, 
+                 main_object_only=False,
+                 prompt_kw=None, 
+                 pn_prompt_kw=None,
+                 image_load_shape=None, 
+                 return_masks=False,
+                 n_pos_text=3,
+                 n_neg_text=6,
+                 lm_context_mode='pre_post',
+    ):
         super().__init__()
-        self.cfg = cfg = dict(dict(
-            qa_prompt=None, 
-            pn_prompt=None,
-            include_detections=False, 
-            filename_format='{video_id}/frame_{i:010d}.jpg', 
-            n_frames=1, 
-            boxes_only=False, 
-            included_object_class_ids=None, 
-            main_object_only=False,
-            prompt_kw=None, 
-            image_load_shape=None, 
-            return_masks=False,
-            n_pos_text=3,
-            n_neg_text=6,
-            lm_context_mode='pre_post',
-            video_sequence=True,
-        ), **cfg)
-        self.split = split
-        self.cfg['prompt_kw'] = self.cfg['prompt_kw'] or {}
-        self.vis_root = vis_root
         self.vis_processor = vis_processor
         self.annotations = annotations
         self.classes = classes
         for i, a in enumerate(annotations):
             a['instance_id'] = i
-        self.get_prompt = get_prompt_function(cfg['qa_prompt'], cfg['lm_context_mode'])
+        self.get_prompt = get_prompt_function(qa_prompt, lm_context_mode)
+        self.prompt_kw = {**(prompt_kw or {})}
+        self.pn_prompt_kw = {**(pn_prompt_kw or {})}
+        self.n_frames = n_frames
+        self.vis_root = vis_root
+        self.filename_format = filename_format
+        self.include_detections = include_detections
+        self.boxes_only = boxes_only
+        self.included_object_class_ids = included_object_class_ids
+        self.main_object_only = main_object_only
+        self.image_load_shape = image_load_shape
+        self.return_masks = return_masks
+        self.n_pos_text = n_pos_text
+        self.n_neg_text = n_neg_text
         self.h5_file = None
-        if self.cfg['include_detections'] and h5_file is not None:
+        if self.include_detections and h5_file is not None:
             print("Using", h5_file)
             self.h5_file = h5py.File(h5_file, 'r', libver='latest')
             idxs = []
@@ -112,15 +121,11 @@ class VideoFrameDataset(Dataset):
     def load_detections(self, ann):
         raise NotImplementedError()
     
-    def __getitem__(self, i, _recursion=0, _limit=50):
-        # return self._load_ann(i)
-        if _recursion > _limit: raise RuntimeError("I tried to find some data, I really did... but idk. too many missing.")
+    def __getitem__(self, i, _recursion=0):
+        if _recursion > 50: raise RuntimeError("I tried to find some data, I really did... but idk. too many missing.")
         try:
             return self._load_ann(i)
         except Exception as e:
-            if _recursion == 0:
-                import traceback
-                traceback.print_exc()
             print("WARNING:", e)
             return self.__getitem__((i + 1)%len(self), _recursion=_recursion+1)
 
@@ -136,7 +141,7 @@ class VideoFrameDataset(Dataset):
         masks = None
         detections = None
         object_index = None
-        if self.cfg['include_detections']:
+        if self.include_detections:
             if self.h5_file is None:
                 detections = self.load_detections(ann)
 
@@ -158,9 +163,9 @@ class VideoFrameDataset(Dataset):
 
             # filter detections
             included_object_class_ids = []
-            if self.cfg['included_object_class_ids'] is not None:
-                included_object_class_ids.extend(self.cfg['included_object_class_ids'])
-            if self.cfg['main_object_only']:
+            if self.included_object_class_ids is not None:
+                included_object_class_ids.extend(self.included_object_class_ids)
+            if self.main_object_only:
                 included_object_class_ids.extend(ann['all_noun_classes'])
             if included_object_class_ids:
                 dets = [
@@ -170,52 +175,27 @@ class VideoFrameDataset(Dataset):
             object_index = list({l for d in dets for l in d.data['labels']})
 
             # draw detection frames
-            if self.cfg['return_masks']:
-                masks = detections.mask[:, None]
+            if self.return_masks:
+                masks = detections.mask
             else:
                 det_frames = [
-                    draw_detections(x, d, object_index, boxes_only=self.cfg['boxes_only']) 
+                    draw_detections(x, d, object_index, boxes_only=self.boxes_only) 
                     for x, i, d in zip(frames, frame_ids, dets)
                 ]
                 # interleave frames
-                # frames = [x for xs in zip(frames, det_frames) for x in xs]
-                video = torch.stack([
-                    torch.stack([self.vis_processor(x) for x in frames], dim=0),
-                    torch.stack([self.vis_processor(x) for x in det_frames], dim=0),
-                ], dim=1)
+                frames = [x for xs in zip(frames, det_frames) for x in xs]
                 # frames = det_frames
 
         else:
             # load frames
             frames, frame_ids = self._load_frames(files)
-            video = torch.stack([self.vis_processor(x) for x in frames], dim=0)[:, None]
-
-        video = F.pad(video, (0, 0, 0, 0, 0, 0, 0, 0, 0, max(self.cfg['n_frames'] - video.shape[1], 0)))[:self.cfg['n_frames']]
-        if not self.cfg['video_sequence']:
-            video = video.reshape(-1, *video.shape[-3:])
 
         # load question answer
-        prompt, target = self.get_prompt(ann, object_index, **self.cfg['prompt_kw'])
-        # print(prompt, target)
-
-        pretrain_data = {}
-        if self.cfg['lm_context_mode'] == 'pre_post':
-            # load question answer
-            (all_pos_text, all_neg_text), (all_pos_preds, all_neg_preds) = get_positive_negative_statements(ann, object_index)
-            if self.split == 'train':
-                pos_text = np.random.choice(all_pos_text, self.cfg['n_pos_text'], replace=len(all_pos_text)<self.cfg['n_pos_text']).tolist()
-                neg_text = np.random.choice(all_neg_text, self.cfg['n_neg_text'], replace=len(all_neg_text)<self.cfg['n_neg_text']).tolist()
-            else:
-                pos_text = all_pos_text
-                neg_text = all_neg_text
-            pretrain_data = {
-                "caption": ". ".join(sorted(set(all_pos_text))),
-                "text_class": [[x] + neg_text for x in pos_text],
-                "text_match": pos_text + neg_text,
-                "text_class_targets": torch.zeros(len(pos_text)).long(),
-                "text_match_targets": torch.tensor([1]*len(pos_text) + [0]*len(neg_text)).long(),
-                "text_match_states": all_pos_preds + all_neg_preds,
-            }
+        prompt, target = self.get_prompt(ann, object_index, **self.prompt_kw)
+        # load question answer
+        all_pos_text, all_neg_text = get_positive_negative_statements(ann, object_index)
+        pos_text = np.random.choice(all_pos_text, self.n_pos_text, replace=len(all_pos_text)<self.n_pos_text).tolist()
+        neg_text = np.random.choice(all_neg_text, self.n_neg_text, replace=len(all_neg_text)<self.n_neg_text).tolist()
 
         # get classification vector
         class_targets = class_labels = None
@@ -227,11 +207,16 @@ class VideoFrameDataset(Dataset):
         #     predicates = [Predicate(c).norm_vars() for c in self.classes]
         #     class_targets = torch.as_tensor([1 if c.flip(True) in states else 0 if c.flip(False) in states else -1 for c in predicates])
 
+        video = torch.stack([self.vis_processor(x) for x in frames], dim=0)
         return {
             # **ann,
             'image': video,
             "prompt": prompt,
-            **pretrain_data,
+            "caption": ". ".join(sorted(set(all_pos_text))),
+            "text_class": [[x] + neg_text for x in pos_text],
+            "text_match": pos_text + neg_text,
+            "text_class_targets": torch.zeros(len(pos_text)).long(),
+            "text_match_targets": torch.tensor([1]*len(pos_text) + [0]*len(neg_text)).long(),
             "text_input": prompt,
             "text_output": target,
             # metadata
@@ -244,21 +229,21 @@ class VideoFrameDataset(Dataset):
             "instance_id": ann["instance_id"],
             "question_id": ann["instance_id"],
             "sample_id": i,
-            "context_mode": ann['pre_post'],
 
             "targets": class_targets,
             # "class_labels": class_labels,
             **({'masks': masks} if masks is not None else {})
         }
 
+    
     def _sorted_sample(self, frame_fnames, weights=None):
         if weights is not None:
             weights = np.asarray(weights)
             weights = weights / weights.sum()
-        if self.cfg['n_frames'] != 'all':
+        if self.n_frames != 'all':
             frame_fnames = np.random.choice(
                 list(frame_fnames), 
-                min(self.cfg['n_frames'] or 1, len(frame_fnames)),
+                min(self.n_frames or 1, len(frame_fnames)),
                 replace=False,
                 p=weights)
         return sorted(frame_fnames)
@@ -266,7 +251,7 @@ class VideoFrameDataset(Dataset):
     def _load_frames(self, fs, frame_ids=None, weights=None):
         if frame_ids is None:
             frame_ids = list(fs)
-        n = len(fs) if self.cfg['n_frames'] == 'all' else self.cfg['n_frames']
+        n = len(fs) if self.n_frames == 'all' else self.n_frames
         n = min(n or 1, len(fs))
 
         if weights is not None:
@@ -280,7 +265,7 @@ class VideoFrameDataset(Dataset):
         for fid in samples:
             for _ in range(3):
                 try:
-                    frames.append(PIL_load(fs[fid], self.cfg['image_load_shape']))
+                    frames.append(PIL_load(fs[fid], self.image_load_shape))
                     out_frame_ids.append(fid)
                     break
                 except OSError:
@@ -295,7 +280,7 @@ class VideoFrameDataset(Dataset):
         return frames, out_frame_ids
     
     def _frame_name(self, video_id, i):
-        return os.path.join(self.vis_root, self.cfg['filename_format'].format(video_id=video_id, i=i))
+        return os.path.join(self.vis_root, self.filename_format.format(video_id=video_id, i=i))
 
     def _existing_frames(self, ann, start_frame, stop_frame):
         frames = {i: self._frame_name(ann['video_id'], i) for i in range(start_frame, stop_frame+1)}
@@ -313,7 +298,7 @@ class EpicKitchensDataset(VideoFrameDataset):
                  filter_verbs=None, 
                  shuffle=True, 
                  predicate_freq_balancing=True, 
-                 lm_context_mode='pre_post',
+                 action_window_mode='pre_post',
                  **kw):
         annotations, predicates, predicate_counts = load_epic_kitchens_dataset(
             annotation_path, 
@@ -325,13 +310,14 @@ class EpicKitchensDataset(VideoFrameDataset):
             filter_verbs, 
             shuffle, 
             predicate_freq_balancing,
-            lm_context_mode,
+            action_window_mode,
         )
         if fake_duplicate_count:
             annotations = annotations * fake_duplicate_count
         self.json_dir = json_dir
         self.classes = [str(p) for p in predicates]
-        super().__init__(annotations, vis_root, vis_processor=vis_processor, classes=predicates, lm_context_mode=lm_context_mode, **kw)
+        super().__init__(annotations, vis_root, vis_processor=vis_processor, classes=predicates, **kw)
+        self.prompt_kw['predicate_freq'] = predicate_counts
         self.prof_count = 0
 
     def load_detections(self, ann):

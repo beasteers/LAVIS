@@ -1,0 +1,28 @@
+_BASE_: base.yaml
+datasets:
+  epic_kitchens:
+    build_info:
+      kwargs:
+        all:
+          n_frames: 7
+          lm_context_mode: action
+          include_detections: True
+          main_object_only: True
+          included_object_class_ids:
+          - 11
+          - 300
+          - 301
+          - 303
+          - 304
+        val:
+          qa_prompt:
+            - action_state_change
+            - action_state_const
+        test:
+          qa_prompt:
+            - action_state_change
+            - action_state_const
+
+run:
+  output_dir: "output/results/epic_kitchens/epic_kitchens_vqa_finetune"
+  resume_ckpt_path: lavis/output/results/epic_kitchens/epic_kitchens_pretrain/20240513160/checkpoint_best.pth

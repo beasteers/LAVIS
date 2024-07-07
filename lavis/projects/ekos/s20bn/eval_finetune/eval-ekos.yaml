@@ -1,0 +1,17 @@
+_BASE_: ../vqa_finetune.yaml
+
+datasets:
+  s20bn:
+  epic_kitchens:
+    build_info:
+      kwargs:
+        all: {}
+
+run:
+  evaluate: True
+  output_dir: "output/results/s20bn/s20bn_ekos_eval"
+  valid_splits: []
+  test_splits: ['test']
+
+  resume_ckpt_path: output/results/s20bn/s20bn_4/20240307073/checkpoint_best.pth
+  # /scratch/bs3639/ego2023/LAVIS/lavis/output/results/s20bn/s20bn_videollm/20240514212/checkpoint_0.pth.
