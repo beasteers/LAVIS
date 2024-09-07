@@ -46,16 +46,24 @@ def get_detections(frame_data, frame, scale=None):
     return detections
 
 
-def get_detections_h5(g, frame_ids, frame, scale=None):
+def get_detections_h5(g, frame_ids, frame, scale=None, noun_classes=None, mask=None):
+    frame_index = g['frame_index'][()]
+    class_ids = g['class_ids'][()]
+    mask = (
+        (True if mask is None else mask) & 
+        (True if noun_classes is None else np.isin(class_ids, noun_classes)) & 
+        (True if frame_ids is None else np.isin(frame_index, frame_ids)))
+    mask = () if mask is True else mask
+
+    segments = g['segments'][mask]
+    names = g['names'][mask]
+    track_ids = g['track_ids'][mask]
+    # confidences = g['confidences'][mask]
+    frame_index = frame_index[mask]
+    class_ids = class_ids[mask]
+
     detections = []
-    segments = g['segments']
-    names = g['names']
-    class_ids = g['class_ids']
-    track_ids = g['track_ids']
-    confidences = g['confidences']
-    frame_index = g['frame_index']
     for fid in frame_ids:
-        idxs = np.where(frame_index[()] == fid)[0]
         detections.append(get_detections({
             'annotations': [
                 {
@@ -63,8 +71,8 @@ def get_detections_h5(g, frame_ids, frame, scale=None):
                     'name': names[i].decode(),
                     'class_id': int(class_ids[i]),
                     'track_id': int(track_ids[i]),
-                    'confidence': float(confidences[i]),
-                } for i in idxs
+                    # 'confidence': float(confidences[i]),
+                } for i in np.where(frame_index == fid)[0]
             ]
         }, frame, scale))
     return detections

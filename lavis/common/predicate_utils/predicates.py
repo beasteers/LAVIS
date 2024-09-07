@@ -29,6 +29,9 @@ class Predicate:
     def __nonzero__(self):
         return not self.neg
 
+    def is_true(self):
+        return not self.neg
+
     def __eq__(self, other):
         # return (self.neg, self.name, tuple(self.vars)) == (self.neg, other.name, tuple(self.vars))
         return str(self) == str(other)
@@ -38,8 +41,8 @@ class Predicate:
         return f'(not {p})' if self.neg else p
     __repr__ = __str__
 
-    def format(self, **nouns):
-        nouns = [nouns.get(x.strip('?'), x) for x in self.vars]
+    def format(self, *nouns, default=None, **noun_dict):
+        nouns = [nouns[i] if i < len(nouns) else noun_dict.get(x.strip('?'), default or x) for i, x in enumerate(self.vars)]
         if not self.neg and self.positive:
             return self.positive.format(*nouns)
         if self.neg and self.negative:
@@ -139,7 +142,8 @@ def load_pddl_yaml(fname):
     with open(fname, 'r') as f:
         data = yaml.safe_load(f)
     
-    pos_predicates = [Predicate(x) for x in data['predicates']]
+    translations = {Predicate(p).norm(): t for p, t in data['translations'].items()}
+    pos_predicates = [Predicate(x, **data['translations'][x]) for x in data['predicates']]
     # predicates = pos_predicates + [p.flip(False) for p in pos_predicates]
 
     axioms: list[dict] = data['axioms']
@@ -147,7 +151,6 @@ def load_pddl_yaml(fname):
         d['context'] = Predicate(d['context'])
         d['implies'] = [Predicate(x) for x in d['implies']]
 
-    translations = {Predicate(p).norm(): t for p, t in data['translations'].items()}
     actions = {
         d['name']: Action.from_dict(d, translations, axioms)
         for d in data['definitions']
